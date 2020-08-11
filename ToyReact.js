@@ -55,7 +55,7 @@ export let ToyReact = {
         if (typeof type === 'string') {
             element = new ElementWrapper(type)
         } else {
-            element = new type
+            element = new type // new Mycomponent
         }
         for (let name in attributes) {
             element.setAttribute(name, attributes[name]) // 这里不能用property 是本身自带的属性，不能改变的，attribute是赋予属性，不能这么用element[name] = attributes[name] 
