@@ -1,28 +1,74 @@
 // 元素
-class ElementWrapper {
+class ElementWrapper{
     constructor(type) {
-        this.root = document.createElement(type)
+        this.type = type
+        this.props = Object.create(null)
+        this.children = []
     }
     setAttribute(name, value) {
-        this.root.setAttribute(name, value)
+        /*let reg = /^on([\s\S]+)$/
+        if (name.match(reg)) {
+            let eventName = RegExp.$1.replace(/^[\s\S]/, s => s.toLowerCase())
+            this.root.addEventListener(eventName, value)
+        }
+        if (name === 'className') {
+            name = 'class'
+        }*/
+        this.props[name] = value
     }
     appendChild(vchild) {
-        vchild.mountTo(this.root)
+        this.children.push(vchild)
+        // let range = document.createRange()
+        // if (this.root.children.length) {
+        //     range.setStartAfter(this.root.lastChild)
+        //     range.setEndAfter(this.root.lastChild)
+        // } else {
+        //     range.setStart(this.root, 0)
+        //     range.setEnd(this.root, 0)
+        // }
+        // vchild.mountTo(range)
     }
-    mountTo(parent) {
-        parent.appendChild(this.root)
+    mountTo(range) { // 将创建的元素加到置顶元素中
+        range.deleteContents()
+        let reg = /^on([\s\S]+)$/
+        let element = document.createElement(this.type)
+        for (let name in this.props) {
+            let value = this.props[name];
+            if (name.match(reg)) {
+                let eventName = RegExp.$1.replace(/^[\s\S]/, s => s.toLowerCase())
+                element.addEventListener(eventName, value)
+            }
+            if (name === 'className') {
+                name = 'class'
+            }
+            element.setAttribute(name, value)
+        }
+        for (let child of this.children) {
+            let range = document.createRange()
+            if (element.children.length) {
+                range.setStartAfter(element.lastChild)
+                range.setEndAfter(element.lastChild)
+            } else {
+                range.setStart(element, 0)
+                range.setEnd(element, 0)
+            }
+            child.mountTo(range)
+        }
+        range.insertNode(element)
     }
 }
 
 class TextWrapper {
     constructor (content) {
         this.root = document.createTextNode(content) // 创建文本节点
+        this.type = '#text'
+        this.children = []
+        this.props = Object.create(null)
     }
-    appendChild(vchild) {
-        vchild.mountTo(this.root)
-    }
-    mountTo(parent) {
-        parent.appendChild(this.root)
+    mountTo(range) {
+        this.range = range
+        range.deleteContents()
+        range.insertNode(this.root)
     }
 }
 
@@ -30,17 +76,89 @@ class TextWrapper {
 export class Component {
     constructor() {
         this.children = []
+        this.props = Object.create(null)
+        this.range;
     }
     setAttribute(name, value) {
+        this.props[name] = value
         this[name] = value
     }
-    mountTo(parent) {
+    mountTo(range) {
+        this.range = range
+        this.update() // 更新vdom
+    }
+    update() {
         let vdom = this.render()
-        vdom.mountTo(parent)
+        if (this.vdom) {
+            let isSameNode = (node1, node2) => {
+                if (node1.type !== node2.type) { // 节点类型是否相等
+                    return false
+                }
+                for (let name in node1.props) {
+                    if (node1.props[name] !== node2.props[name]) { // 属性名值是否一样
+                        return false
+                    }
+                }
+                if (Object.keys(node1.props).length !== Object.keys(node2.props).length) { // 判断属性长度是否相等
+                    return false
+                }
+                return true
+            }
+            let isSameTree = (node1, node2) => {
+                if (!isSameNode(node1, node2)) {
+                    return false
+                }
+                if (node1.children.length !== node2.children.length) {
+                    return false
+                }
+                for (let i = 0; i < node1.children.length; i++) {
+                    if (!isSameTree(node1.children[i], node2.children[i])) {
+                        return false
+                    }
+                }
+                return true
+            }
+            let replace = (newTree, oldTree) => {
+                if (isSameTree(newTree, oldTree)) {
+                    return
+                }
+                if (!isSameNode(newTree, oldTree)) {
+                    newTree.mountTo(oldTree, range)
+                } else {
+                    for (let i = 0; i < newTree.children.length; i++) {
+                        replace(newTree.children[i], oldTree.children[i])
+                    }
+                }
+            }
+            replace(vdom, this.vdom)
+        } else {
+            vdom.mountTo(this.range)
+        }
+        this.vdom = vdom
     }
     appendChild(vchild) {
         console.log('Component', vchild)
         this.children.push(vchild)
+    }
+    setState (state) {
+        let merge = (oldState, newState) => {
+            for (let p in newState) {
+                if (typeof newState[p] === 'object' && newState[p] !== null) {
+                    if (typeof oldState[p] !== 'object') {
+                        oldState[p] = {}
+                    }
+                    merge(oldState[p], newState[p])
+                } else {
+                    oldState[p] = newState[p]
+                }
+            }
+        }
+        if (!this.state && state) {
+            this.state = {}
+        }
+        merge(this.state, state)
+        console.log(this.state)
+        this.update()
     }
 }
 /** 
@@ -50,7 +168,6 @@ export class Component {
 */
 export let ToyReact = {
     createElement(type, attributes, ...children) {
-        console.log(arguments)
         let element;
         if (typeof type === 'string') {
             element = new ElementWrapper(type)
@@ -62,7 +179,7 @@ export let ToyReact = {
         }
         let insertChildren = (children) => {
             for (let child of children) {
-                if (typeof child === 'object' && child instanceof Array) { // 数组就递归调用
+                if (Array.isArray(child)) { // 数组就递归调用
                     insertChildren(child)
                 } else {
                     if (!(child instanceof Component) && !(child instanceof ElementWrapper) && !(child instanceof TextWrapper)) {
@@ -79,7 +196,15 @@ export let ToyReact = {
         return element
     },
     render(vdom, element) {
-        vdom.mountTo(element)
+        let range = document.createRange() // 将元素渲染到页面上
+        if (element.children.length) { // 如果该元素有真实子元素
+            range.setStartAfter(element.lastChild)
+            range.setEndAfter(element.lastChild)
+        } else {
+            range.setStart(element, 0)  //  setStart设置起点位置
+            range.setEnd(element, 0)
+        }
+        vdom.mountTo(range)
     }
 }
 
